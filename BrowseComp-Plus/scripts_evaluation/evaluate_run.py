@@ -13,6 +13,9 @@ from tqdm import tqdm
 from vllm import LLM, SamplingParams
 
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))
+
+from evaluate import em_check, f1_score, extract_solution
 
 GRADER_TEMPLATE = """
 Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
@@ -323,6 +326,8 @@ def save_detailed_csv(all_results: List[dict], output_dir: Path):
             "predicted_answer",
             "correct_answer",
             "judge_correct",
+            "em",
+            "f1",
             "confidence",
             "is_completed",
             "parse_error",
@@ -361,6 +366,8 @@ def save_detailed_csv(all_results: List[dict], output_dir: Path):
                     "predicted_answer": predicted_answer,
                     "correct_answer": result.get("correct_answer", ""),
                     "judge_correct": judge_result.get("correct", ""),
+                    "em": result.get("em", 0),
+                    "f1": round(result.get("f1", 0.0), 4),
                     "confidence": judge_result.get("confidence", ""),
                     "is_completed": result.get("is_completed", ""),
                     "parse_error": judge_result.get("parse_error", False),
@@ -425,6 +432,12 @@ def main():
         default=1,
         help="Tensor parallel size for vLLM",
     )
+    parser.add_argument(
+        "--gpu_memory_utilization",
+        type=float,
+        default=0.9,
+        help="Fraction of GPU memory to use for vLLM (0.0-1.0)",
+    )
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -457,7 +470,11 @@ def main():
     all_results = []
 
     # Initialize vLLM engine and sampling params
-    llm = LLM(model=args.model, tensor_parallel_size=args.tensor_parallel_size)
+    llm = LLM(
+        model=args.model,
+        tensor_parallel_size=args.tensor_parallel_size,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+    )
     sampling_params = SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
@@ -636,6 +653,16 @@ def main():
         print("No results to analyze")
         return
 
+    # Rule-based EM and F1 using only the answer parsed from <answer>...</answer> (separate from LLM judge)
+    for result in all_results:
+        response_text = result.get("response", "") or ""
+        correct_answer = result.get("correct_answer", "")
+        pred_answer = extract_solution(response_text) or ""
+        em = em_check(pred_answer, correct_answer)
+        f1 = f1_score(pred_answer, correct_answer)
+        result["em"] = em
+        result["f1"] = f1
+
     all_tool_counts = defaultdict(int)
 
     for result in all_results:
@@ -692,6 +719,10 @@ def main():
     )
     accuracy_fraction = (correct_count / total) if total else 0.0
     accuracy_percent = round(accuracy_fraction * 100.0, 2)
+    em_mean = float(np.mean([r.get("em", 0) for r in all_results]))
+    f1_mean = float(np.mean([r.get("f1", 0.0) for r in all_results]))
+    em_percent = round(em_mean * 100.0, 2)
+    f1_percent = round(f1_mean * 100.0, 2)
     recall_percent = (
         round(retrieval_recall_avg * 100.0, 2)
         if isinstance(retrieval_recall_avg, (int, float))
@@ -718,6 +749,8 @@ def main():
                 "query_id": qid,
                 "correct": correct_flag,
                 "recall": recall_val_percent,
+                "em": r.get("em", 0),
+                "f1": round(r.get("f1", 0.0), 4),
             }
         )
 
@@ -771,6 +804,8 @@ def main():
     summary = {
         "LLM": detected_model_name or "change me when submitting",
         "Accuracy (%)": accuracy_percent,
+        "EM (%)": em_percent,
+        "F1 (%)": f1_percent,
         "Recall (%)": recall_percent,
         "avg_tool_stats": all_tool_counts,
         "Calibration Error (%)": calibration_err_percent,
@@ -782,6 +817,8 @@ def main():
 
     print(f"Evaluated {total} responses:")
     print(f"Accuracy: {accuracy_percent:.2f}%")
+    print(f"EM (Exact Match): {em_percent:.2f}%")
+    print(f"F1: {f1_percent:.2f}%")
     print(
         "Recall: "
         + (
