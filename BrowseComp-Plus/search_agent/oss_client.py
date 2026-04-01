@@ -439,7 +439,8 @@ def main():
             "QUERY_TEMPLATE_NO_GET_DOCUMENT",
             "QUERY_TEMPLATE_NO_GET_DOCUMENT_NO_CITATION",
         ],
-        default="QUERY_TEMPLATE_NO_GET_DOCUMENT",
+        # default="QUERY_TEMPLATE_NO_GET_DOCUMENT",
+        default="QUERY_TEMPLATE",
         help="Specify the query template to use (default: %(default)s)",
     )
     parser.add_argument(
