@@ -63,6 +63,8 @@ def prepare_data(data_name, args, save_async=False):
             processes = processes[split_size * (args.split_id - 1): split_size * args.split_id]
 
     for p in processes:
+        if "question" not in p and "Question" in p:
+            p["question"] = p["Question"]
         if "answer" not in p and "gt" in p:
             p["answer"] = p["gt"]
         if isinstance(p["answer"], list) and len(p["answer"]) == 1:
