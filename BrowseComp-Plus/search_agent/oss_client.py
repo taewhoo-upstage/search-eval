@@ -5,6 +5,7 @@ import csv
 import json
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -146,6 +147,7 @@ def run_conversation_with_tools(
     iteration = 1
 
     while iteration <= max_iterations:
+        t_iter = time.time()
         try:
             request = initial_request.copy()
             request["input"] = messages
@@ -153,13 +155,21 @@ def run_conversation_with_tools(
                 **request,
             )
         except Exception as e:
+            print(f"  [iter {iteration}] API error ({time.time()-t_iter:.1f}s): {e}", flush=True)
             if verbose:
-                print(f"Error: {e}")
                 rprint(f"Request: {request}")
             iteration += 1
             continue
 
+        elapsed_iter = time.time() - t_iter
         response_dict = response.model_dump(mode="python")
+        output_types = [item["type"] for item in response_dict["output"]]
+        usage = getattr(response, "usage", None)
+        usage_str = ""
+        if usage:
+            usage_str = f" | tokens: in={getattr(usage, 'input_tokens', '?')} out={getattr(usage, 'output_tokens', '?')}"
+        print(f"  [iter {iteration}] {elapsed_iter:.1f}s | output_types={output_types}{usage_str}", flush=True)
+        print(f"  [iter {iteration}] output: {json.dumps(response_dict['output'], ensure_ascii=False, default=str)}", flush=True)
 
         messages.extend(response_dict["output"])
 
@@ -370,6 +380,8 @@ def _process_tsv_dataset(
             "tools": tool_handler.get_tool_definitions(),
             "truncation": "auto",
             "reasoning": {"effort": args.reasoning_effort, "summary": "detailed"},
+            "temperature": args.temperature,
+            "top_p": args.top_p,
         }
 
         try:
@@ -462,6 +474,15 @@ def main():
     parser.add_argument(
         "--model-url", default="http://localhost:8000/v1", help="Model URL"
     )
+    parser.add_argument(
+        "--temperature", type=float, default=0.8, help="Sampling temperature"
+    )
+    parser.add_argument(
+        "--top-p", type=float, default=0.95, help="Nucleus sampling top-p"
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=50, help="Top-k sampling"
+    )
 
     # Searcher selection and shared tool options --------------------------
     parser.add_argument(
@@ -547,6 +568,8 @@ def main():
         "tools": tool_handler.get_tool_definitions(),
         "truncation": "auto",
         "reasoning": {"effort": args.reasoning_effort, "summary": "detailed"},
+        "temperature": args.temperature,
+        "top_p": args.top_p,
     }
 
     messages, tool_usage, status = run_conversation_with_tools(

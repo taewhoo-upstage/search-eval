@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=solar-open-eval
-#SBATCH --partition=omni
+#SBATCH --partition=normal
 #SBATCH --nodelist=Slurm-GPU-Node-[75-90]
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:8
 #SBATCH --mem=0
-#SBATCH --output=/mnt/weka/post_training/pt2-search-agent/evaluation/orig_repo/BrowseComp-Plus/logs/solar-open-100b-oss_client_getdoc_eval.log
-#SBATCH --error=/mnt/weka/post_training/pt2-search-agent/evaluation/orig_repo/BrowseComp-Plus/logs/solar-open-100b-oss_client_getdoc_eval.log
+#SBATCH --output=/mnt/weka/post_training/pt2-search-agent/evaluation/orig_repo/BrowseComp-Plus/logs/solar-open-100b-ckpt50_oss_client_getdoc_eval.log
+#SBATCH --error=/mnt/weka/post_training/pt2-search-agent/evaluation/orig_repo/BrowseComp-Plus/logs/solar-open-100b-ckpt50_oss_client_getdoc_eval.log
 
 set -euo pipefail
 
@@ -36,4 +36,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 mkdir -p ./logs
 
-python -u scripts_evaluation/evaluate_run.py --input_dir runs/solar-open-100b/oss_client
+MODEL_PATH="${MODEL_PATH:-/mnt/weka/post_training/checkpoints/Solar-Open-100B}"
+MODEL_NAME="${MODEL_PATH##*/}"
+
+python -u scripts_evaluation/evaluate_run.py --input_dir "runs/${MODEL_NAME}/oss_client"

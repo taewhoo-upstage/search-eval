@@ -156,6 +156,12 @@ def run_conversation_with_tools(
             "messages": messages,
             "tools": tools,
             "max_tokens": remaining_tokens,
+            "extra_body": {
+                "chat_template_kwargs": {
+                    "enable_thinking": True,
+                    "clear_thinking": False,
+                }
+            },
         }
         if temperature is not None:
             create_kwargs["temperature"] = temperature
@@ -389,10 +395,12 @@ def _process_tsv_dataset(tsv_path: str, client: OpenAI, args, tool_handler: Sear
 def main():
     parser = argparse.ArgumentParser(description="Call GLM (OpenAI-compatible) with native function calling and local search.")
     parser.add_argument("--query", default="topics-qrels/queries.tsv", help="User query text or path to TSV. Wrap in quotes if contains spaces.")
-    parser.add_argument("--model", default="glm-4.6", help="Model name (default: %(default)s)")
-    parser.add_argument("--max_tokens", type=int, default=20000, help="Max tokens to generate (default: %(default)s)")
+    parser.add_argument("--model", default="glm-4.7", help="Model name (default: %(default)s)")
+    parser.add_argument("--model-url", default="http://localhost:8000/v1", help="OpenAI-compatible endpoint URL (default: %(default)s)")
+    parser.add_argument("--api-key", default="EMPTY", help="API key (default: EMPTY for local servers)")
+    parser.add_argument("--max_tokens", type=int, default=131072, help="Max tokens to generate (default: %(default)s)")
     parser.add_argument("--system", default=None, help="Optional system prompt")
-    parser.add_argument("--output-dir", default="runs/bm25/glm_4_6", help="Directory to store logs (default: %(default)s)")
+    parser.add_argument("--output-dir", default="runs/bm25/glm_4_7", help="Directory to store logs (default: %(default)s)")
     parser.add_argument("--query-template", choices=["QUERY_TEMPLATE", "QUERY_TEMPLATE_NO_GET_DOCUMENT", "QUERY_TEMPLATE_NO_GET_DOCUMENT_NO_CITATION"], default="QUERY_TEMPLATE_NO_GET_DOCUMENT", help="Specify the query template to use")
     parser.add_argument("--temperature", type=float, default=None, help="Temperature for the model (default: use model defaults)")
     parser.add_argument("--top_p", type=float, default=None, help="Top P for the model (default: use model defaults)")
@@ -460,11 +468,11 @@ def main():
         print(f"[DEBUG] Setting HF home from CLI argument: {args.hf_home}")
         os.environ['HF_HOME'] = args.hf_home
 
-    api_key = os.getenv("ZAI_API_KEY")
+    api_key = os.getenv("ZAI_API_KEY") or args.api_key
     if not api_key:
-        raise RuntimeError("ZAI_API_KEY is not set in environment")
+        raise RuntimeError("ZAI_API_KEY is not set in environment and --api-key not provided")
 
-    client = OpenAI(api_key=api_key, base_url="https://api.z.ai/api/paas/v4/")
+    client = OpenAI(api_key=api_key, base_url=args.model_url)
 
     searcher = searcher_class(args)
 
