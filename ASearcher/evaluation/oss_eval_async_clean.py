@@ -48,7 +48,7 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 QUERY_TEMPLATE = """
-You are a deep research agent. You need to answer the given question by interacting with a search engine, using the search and get_document tools provided. Please perform reasoning and use the tools step by step, in an interleaved manner. You may use the search and get_document tools multiple times.
+You are a deep research agent. You need to answer the given question by interacting with a search engine, using the search and browse tools provided. Please perform reasoning and use the tools step by step, in an interleaved manner. You may use the search and browse tools multiple times.
 
 Question: {Question}
 
@@ -181,10 +181,45 @@ class WebSearchToolHandler:
     """
     Synchronous web search using Serper + optional Jina.
 
-    Mirrors the tool names from BrowseComp-Plus/search_agent/oss_client.py:
-      - ``local_knowledge_base_retrieval``  (user_query → Serper)
-      - ``get_document``                    (docid=URL → Jina / requests)
+    Tools exposed to the model:
+      - ``search``  (queries: list[str] → Serper, returns title/url/snippet per query)
+      - ``browse``  (url, query → Jina / requests, returns page text)
     """
+
+    SEARCH_TOOL = {
+        "type": "function",
+        "name": "search",
+        "description": "Perform web search queries. Provide an array 'queries'. Returns (title,url,snippet) for each query.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "queries": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of search query strings.",
+                }
+            },
+            "required": ["queries"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    }
+
+    BROWSE_TOOL = {
+        "type": "function",
+        "name": "browse",
+        "description": "Extract specific information from a webpage at 'url' for a given 'query'.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Target URL to browse."},
+                "query": {"type": "string", "description": "Question to answer based on the page content."},
+            },
+            "required": ["url", "query"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    }
 
     def __init__(self, k: int = 5, use_jina: bool = True, include_get_document: bool = True):
         from config_loader import get_api_key
@@ -193,77 +228,60 @@ class WebSearchToolHandler:
         self.k = k
         self.use_jina = use_jina and bool(self.jina_api_key)
         self.include_get_document = include_get_document
+        # Per-thread API usage tracking (thread-local to avoid races with concurrent=64)
+        self._thread_local = threading.local()
+
+    def reset_api_usage(self):
+        self._thread_local.api_usage = {"serper_queries": 0, "jina_requests": 0, "jina_total_chars": 0}
+
+    def _usage(self) -> dict:
+        if not hasattr(self._thread_local, "api_usage"):
+            self._thread_local.api_usage = {"serper_queries": 0, "jina_requests": 0, "jina_total_chars": 0}
+        return self._thread_local.api_usage
+
+    def get_api_usage(self) -> dict:
+        usage = dict(self._usage())
+        usage["jina_estimated_tokens"] = usage["jina_total_chars"] // 4
+        return usage
 
     def get_tool_definitions(self) -> list:
-        tools = [
-            {
-                "type": "function",
-                "name": "local_knowledge_base_retrieval",
-                "description": (
-                    f"Search the web for documents relevant to the query. "
-                    f"Returns the top {self.k} results with their URLs (docids) and snippets."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "user_query": {
-                            "type": "string",
-                            "description": "Query to search the local knowledge base for relevant information",
-                        }
-                    },
-                    "required": ["user_query"],
-                    "additionalProperties": False,
-                },
-                "strict": True,
-            }
-        ]
+        tools = [self.SEARCH_TOOL]
         if self.include_get_document:
-            tools.append({
-                "type": "function",
-                "name": "get_document",
-                "description": "Retrieve the full text of a document by its URL (docid).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "docid": {
-                            "type": "string",
-                            "description": "Document URL to retrieve",
-                        }
-                    },
-                    "required": ["docid"],
-                    "additionalProperties": False,
-                },
-                "strict": True,
-            })
+            tools.append(self.BROWSE_TOOL)
         return tools
 
     def execute_tool(self, tool_name: str, arguments: dict) -> str:
         import requests
-        if tool_name == "local_knowledge_base_retrieval":
+        if tool_name == "search":
             if not self.serper_api_key:
                 return json.dumps({"error": "SERPER_API_KEY not configured"})
-            try:
-                resp = requests.post(
-                    "https://google.serper.dev/search",
-                    headers={"X-API-KEY": self.serper_api_key, "Content-Type": "application/json"},
-                    json={"q": arguments["user_query"][:2000], "num": self.k},
-                    timeout=20,
-                )
-                resp.raise_for_status()
-                items = [
-                    {
-                        "docid": r.get("link", ""),
-                        "score": None,
-                        "snippet": r.get("title", "") + " " + r.get("snippet", ""),
-                    }
-                    for r in resp.json().get("organic", [])[:self.k]
-                ]
-                return json.dumps(items, indent=2)
-            except Exception as e:
-                return json.dumps({"error": str(e)})
+            results = []
+            queries = arguments.get("queries", [])
+            self._usage()["serper_queries"] += len(queries)
+            for query in queries:
+                try:
+                    resp = requests.post(
+                        "https://google.serper.dev/search",
+                        headers={"X-API-KEY": self.serper_api_key, "Content-Type": "application/json"},
+                        json={"q": query[:2000], "num": self.k},
+                        timeout=20,
+                    )
+                    resp.raise_for_status()
+                    items = [
+                        {
+                            "title": r.get("title", ""),
+                            "url": r.get("link", ""),
+                            "snippet": r.get("snippet", ""),
+                        }
+                        for r in resp.json().get("organic", [])[:self.k]
+                    ]
+                    results.append({"query": query, "results": items})
+                except Exception as e:
+                    results.append({"query": query, "error": str(e)})
+            return json.dumps(results, indent=2)
 
-        if tool_name == "get_document":
-            url = arguments["docid"]
+        if tool_name == "browse":
+            url = arguments["url"]
             try:
                 if self.use_jina:
                     resp = requests.get(
@@ -271,11 +289,14 @@ class WebSearchToolHandler:
                         headers={"Authorization": f"Bearer {self.jina_api_key}"},
                         timeout=30,
                     )
+                    if resp.status_code == 200:
+                        self._usage()["jina_requests"] += 1
+                        self._usage()["jina_total_chars"] += len(resp.text)
                     text = resp.text[:25000] if resp.status_code == 200 else f"HTTP {resp.status_code}"
                 else:
                     resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
                     text = resp.text[:25000]
-                return json.dumps({"docid": url, "text": text}, indent=2)
+                return json.dumps({"url": url, "query": arguments.get("query", ""), "text": text}, indent=2)
             except Exception as e:
                 return json.dumps({"error": str(e)})
 
@@ -323,14 +344,23 @@ def run_conversation_with_tools(
     messages = list(initial_request["input"])
 
     for iteration in range(1, max_iterations + 1):
+        t_iter = time.time()
         try:
             response = client.responses.create(**{**initial_request, "input": messages})
         except Exception as e:
-            if verbose:
-                print(f"  [iter {iteration}] API error: {e}")
+            print(f"  [iter {iteration}] API error ({time.time()-t_iter:.1f}s): {e}", flush=True)
             continue
 
+        elapsed_iter = time.time() - t_iter
         output = response.model_dump(mode="python")["output"]
+        output_types = [item["type"] for item in output]
+        usage = getattr(response, "usage", None)
+        usage_str = ""
+        if usage:
+            usage_str = f" | tokens: in={getattr(usage, 'input_tokens', '?')} out={getattr(usage, 'output_tokens', '?')}"
+        print(f"  [iter {iteration}] {elapsed_iter:.1f}s | output_types={output_types}{usage_str}", flush=True)
+        print(f"  [iter {iteration}] output: {json.dumps(output, ensure_ascii=False, default=str)}", flush=True)
+
         messages.extend(output)
 
         # Reasoning-only turn → keep looping
@@ -425,11 +455,16 @@ def process_single_item(
     if args.temperature > 0:
         request["temperature"] = args.temperature
 
+    if hasattr(tool_handler, "reset_api_usage"):
+        tool_handler.reset_api_usage()
+
     t0 = time.time()
     messages, tool_usage, status = run_conversation_with_tools(
         client, request, tool_handler, args.max_iterations, args.verbose,
     )
     elapsed = time.time() - t0
+
+    api_usage = tool_handler.get_api_usage() if hasattr(tool_handler, "get_api_usage") else {}
 
     pred_answer = extract_answer(messages)
 
@@ -448,6 +483,7 @@ def process_single_item(
         "pred_answer": pred_answer,
         "status": status,
         "tool_usage": tool_usage,
+        "api_usage": api_usage,
         "elapsed_seconds": round(elapsed, 2),
         "history": messages,
         **scored,
@@ -534,6 +570,25 @@ async def eval_dataset(client: openai.OpenAI, tool_handler, data_name: str, args
             f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
 
     result_json["time_use_in_second"] = time.time() - t0
+
+    # Aggregate API usage across all samples
+    total_serper = sum(r.get("api_usage", {}).get("serper_queries", 0) for r in results)
+    total_jina_req = sum(r.get("api_usage", {}).get("jina_requests", 0) for r in results)
+    total_jina_chars = sum(r.get("api_usage", {}).get("jina_total_chars", 0) for r in results)
+    total_jina_tokens = total_jina_chars // 4
+    jina_cost = total_jina_tokens * 0.05 / 1_000_000
+    api_summary = {
+        "serper_queries_total": total_serper,
+        "jina_requests_total": total_jina_req,
+        "jina_total_chars": total_jina_chars,
+        "jina_estimated_tokens": total_jina_tokens,
+        "jina_estimated_cost_usd": round(jina_cost, 4),
+        "serper_queries_per_sample": round(total_serper / len(results), 2) if results else 0,
+        "jina_requests_per_sample": round(total_jina_req / len(results), 2) if results else 0,
+    }
+    result_json["api_usage"] = api_summary
+    print(f"  {data_name} API usage: {json.dumps(api_summary, indent=2)}")
+
     print(f"  {data_name}: {result_json}")
     return result_json
 

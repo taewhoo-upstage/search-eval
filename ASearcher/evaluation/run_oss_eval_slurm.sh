@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=solar-open-eval
 #SBATCH --partition=omni
-#SBATCH --nodelist=Slurm-GPU-Node-[88]
+#SBATCH --nodelist=Slurm-GPU-Node-[75-90]
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:8
 #SBATCH --mem=0
@@ -32,7 +32,7 @@ EVAL_ROOT=/mnt/weka/post_training/pt2-search-agent/evaluation
 SCRIPT_DIR="${EVAL_ROOT}/orig_repo/ASearcher/evaluation"
 PROJECT_ROOT="${EVAL_ROOT}/orig_repo/ASearcher"
 
-MODEL_PATH=/mnt/weka/post_training/checkpoints/Solar-Open-100B
+MODEL_PATH="${MODEL_PATH:-/mnt/weka/post_training/checkpoints/Solar-Open-100B}"
 MODEL_NAME="${MODEL_PATH##*/}"
 MODEL_URL=http://localhost:8000/v1
 
@@ -43,6 +43,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/output/${MODEL_NAME}"
 # ─── Eval config ──────────────────────────────────────────────────────────────
 MAX_GEN_TOKENS=4096
 DATA_NAMES=GAIA,frames
+SPLIT="${SPLIT:-test}"
 AGENT_TYPE=oss-tool-calling
 PROMPT_TYPE=tool-calling
 SEARCH_CLIENT_TYPE=async-search-access
@@ -121,8 +122,8 @@ WAIT=0
 until curl -s http://localhost:8000/health >/dev/null 2>&1; do
   sleep 5
   WAIT=$((WAIT + 5))
-  if [ "${WAIT}" -ge 600 ]; then
-    echo "ERROR: vLLM server did not become ready within 10 minutes"
+  if [ "${WAIT}" -ge 1200 ]; then
+    echo "ERROR: vLLM server did not become ready within 20 minutes"
     exit 1
   fi
 done
@@ -147,7 +148,7 @@ python3 oss_eval_async_clean.py \
     --prompt_type         "${PROMPT_TYPE}" \
     --agent-type          "${AGENT_TYPE}" \
     --data_dir            "${DATA_DIR}" \
-    --split               test \
+    --split               "${SPLIT}" \
     --search-client-type  "${SEARCH_CLIENT_TYPE}" \
     --max-tokens-per-call "${MAX_GEN_TOKENS}" \
     --top-k-docs          5 \
@@ -162,7 +163,7 @@ python3 oss_eval_async_clean.py \
     --seed                1 \
     --parallel-mode       seed \
     --concurrent          64 \
-    --pass-at-k           4 \
+    --pass-at-k           "${PASS_AT_K:-4}" \
     --get-document \
     --query-template      QUERY_TEMPLATE \
     "$@"
