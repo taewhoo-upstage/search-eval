@@ -28,14 +28,15 @@ else
 fi
 
 # ─── Model configuration ────────────────────────────────────────────────────
-MODEL_PATH=/mnt/weka/post_training/checkpoints/Qwen3.5-397B-A17B
-MODEL_NAME=Qwen3.5-397B-A17B
+MODEL_PATH="${MODEL_PATH:-/mnt/weka/post_training/checkpoints/Qwen3.5-397B-A17B}"
+MODEL_NAME="${MODEL_NAME:-${MODEL_PATH##*/}}"
 QUERY_FILE="${QUERY_FILE:-topics-qrels/queries.tsv}"
 
 # Qwen3.5 recommended params (thinking mode)
 TEMPERATURE=0.6
 TOP_P=0.95
-MAX_TOKENS=81920
+MAX_TOKENS="${MAX_TOKENS:-81920}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-131072}"
 
 BC_ROOT=/mnt/weka/post_training/pt2-search-agent/evaluation/orig_repo/BrowseComp-Plus
 
@@ -55,7 +56,7 @@ conda activate qwen35_35b
 vllm serve "${MODEL_PATH}" \
   --port 8000 \
   --tensor-parallel-size 8 \
-  --max-model-len 131072 \
+  --max-model-len "${MAX_MODEL_LEN}" \
   --served-model-name "${MODEL_NAME}" \
   --gpu-memory-utilization 0.8 \
   --reasoning-parser qwen3 \

@@ -378,7 +378,16 @@ def _process_tsv_dataset(tsv_path: str, client: OpenAI, args, tool_handler: Sear
             )
         except Exception as exc:
             print(f"[Error] Query id={qid} failed: {exc}")
-            sys.exit(1)
+            _persist_response(
+                args.output_dir,
+                model=args.model,
+                query_id=qid,
+                system_prompt=args.system,
+                max_tokens=args.max_tokens,
+                normalized_results=[{"type": "error", "tool_name": None, "arguments": None, "output": str(exc)}],
+                cumulative_usage={},
+                finish_reason="error",
+            )
 
     if args.num_threads <= 1:
         with tqdm(remaining, desc="Queries", unit="query") as pbar:
