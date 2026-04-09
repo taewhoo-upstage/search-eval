@@ -41,7 +41,6 @@ MODEL_URL=http://localhost:8000/v1
 TEMPERATURE=0.6
 TOP_P=0.95
 MAX_GEN_TOKENS="${MAX_GEN_TOKENS:-81920}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-131072}"
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 EVAL_ROOT=/mnt/weka/post_training/pt2-search-agent/evaluation
@@ -77,7 +76,7 @@ conda activate qwen35_35b
 vllm serve "${MODEL_PATH}" \
   --port 8000 \
   --tensor-parallel-size 8 \
-  --max-model-len "${MAX_MODEL_LEN}" \
+  ${MAX_MODEL_LEN:+--max-model-len ${MAX_MODEL_LEN}} \
   --served-model-name "${MODEL_NAME}" \
   --gpu-memory-utilization 0.9 \
   --reasoning-parser qwen3 \
