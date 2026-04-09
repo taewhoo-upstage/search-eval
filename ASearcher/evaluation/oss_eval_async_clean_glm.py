@@ -418,7 +418,10 @@ def run_conversation_with_tools(
         msg = response.choices[0].message
 
         # Append assistant turn to history
+        reasoning = getattr(msg, "reasoning_content", None)
         assistant_msg: dict = {"role": "assistant", "content": msg.content or ""}
+        if reasoning:
+            assistant_msg["reasoning_content"] = reasoning
         if msg.tool_calls:
             assistant_msg["tool_calls"] = [
                 {
