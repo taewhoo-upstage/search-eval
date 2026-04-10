@@ -378,6 +378,9 @@ def _process_tsv_dataset(tsv_path: str, client: OpenAI, args, tool_handler: Sear
             )
         except Exception as exc:
             print(f"[Error] Query id={qid} failed: {exc}")
+            if "Connection error" in str(exc):
+                print("[Fatal] Server connection lost. Exiting.")
+                sys.exit(1)
             _persist_response(
                 args.output_dir,
                 model=args.model,
